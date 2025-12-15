@@ -87,3 +87,17 @@ build/
 .DS_Store
 Thumbs.db
 
+# Local-only project docs and scripts (não versionar no GitHub)
+DISTRIBUICAO.md
+ESTRUTURA_PACOTE.md
+INSTALL.md
+PUBLISH_GUIDE.md
+README2.md
+RECOMMENDATION.md
+prepare_for_distribution.sh
+resubmit_github.sh
+test_install.py
+pyproject.toml
+setup.py
+MANIFEST.in
+
