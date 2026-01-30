@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from litevectordb.index.linear import LinearIndex
+
 
 class VectorStore:
     """
@@ -24,6 +26,27 @@ class VectorStore:
         self._conn = sqlite3.connect(self.path)
         self._conn.execute("PRAGMA journal_mode=WAL;")  # melhor p/ concorrência leve
         self._create_schema()
+
+        self.index = LinearIndex(dim=self.dim)
+        self._load_index()
+
+    def _load_index(self):
+        """Carrega vetores do disco para a memória no startup"""
+        cur = self._conn.cursor()
+        cur.execute("SELECT id, vector FROM documents")
+        rows = cur.fetchall()
+        
+        if not rows:
+            return
+
+        ids = []
+        vectors = []
+        for doc_id, blob in rows:
+            ids.append(str(doc_id))
+            vectors.append(self._decode_vector(blob))
+        
+        if ids:
+            self.index.add(ids, np.array(vectors))
 
     # ---------- setup ----------
 
@@ -81,7 +104,11 @@ class VectorStore:
             (key, content, meta_json, blob, self.dim),
         )
         self._conn.commit()
-        return cur.lastrowid
+        
+        doc_id = cur.lastrowid
+        self.index.add([str(doc_id)], np.array([vector]))
+        
+        return doc_id
 
     def upsert(
         self,
@@ -117,6 +144,10 @@ class VectorStore:
                 (content, meta_json, blob, self.dim, doc_id),
             )
             self._conn.commit()
+            
+            # Atualiza índice
+            self.index.add([str(doc_id)], np.array([vector]))
+            
             return doc_id
         else:
             return self.add(vector, content, metadata, key=key)
@@ -169,14 +200,21 @@ class VectorStore:
         }
 
     def delete(self, doc_id: int) -> None:
+        self.index.remove([str(doc_id)])
         cur = self._conn.cursor()
         cur.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
         self._conn.commit()
 
     def delete_by_key(self, key: str) -> None:
         cur = self._conn.cursor()
-        cur.execute("DELETE FROM documents WHERE key = ?", (key,))
-        self._conn.commit()
+        # Precisa buscar ID antes de deletar p/ atualizar índice
+        cur.execute("SELECT id FROM documents WHERE key = ?", (key,))
+        row = cur.fetchone()
+        if row:
+            doc_id = row[0]
+            self.index.remove([str(doc_id)])
+            cur.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+            self._conn.commit()
 
     # ---------- busca vetorial (cosine) ----------
 
@@ -187,44 +225,48 @@ class VectorStore:
         min_score: float = -1.0,
     ) -> List[Dict[str, Any]]:
         """
-        Busca por similaridade de cosseno (em memória).
-        Para poucos milhares de vetores está ótimo.
+        Busca usando o índice vetorial interno.
         """
-        q = np.asarray(query_vector, dtype=np.float32)
-        if q.shape != (self.dim,):
-            raise ValueError(
-                f"expected query vector of shape ({self.dim},), got {q.shape}"
-            )
+        results_index = self.index.search(query_vector, k=top_k)
+        
+        # Filtra por score min
+        results_index = [r for r in results_index if r[1] >= min_score]
+        
+        if not results_index:
+            return []
 
-        q_norm = float(np.linalg.norm(q) + 1e-10)
+        # Recupera metadados do SQLite
+        # ids no índice são strings, precisamos de ints
+        ids_map = {int(r[0]): r[1] for r in results_index}
+        ids_list = list(ids_map.keys())
+        
+        if not ids_list:
+            return []
 
+        placeholders = ",".join(["?"] * len(ids_list))
         cur = self._conn.cursor()
-        cur.execute(
-            "SELECT id, key, content, metadata, vector FROM documents"
-        )
+        query_sql = f"""
+            SELECT id, key, content, metadata
+            FROM documents 
+            WHERE id IN ({placeholders})
+        """
+        cur.execute(query_sql, ids_list)
         rows = cur.fetchall()
 
-        results: List[Dict[str, Any]] = []
-        for _id, key, content, meta_json, blob in rows:
-            v = self._decode_vector(blob)
-            v_norm = float(np.linalg.norm(v) + 1e-10)
-            score = float(np.dot(q, v) / (q_norm * v_norm))
+        final_results = []
+        for _id, key, content, meta_json in rows:
+            score = ids_map.get(_id, 0.0)
+            final_results.append({
+                "id": _id,
+                "key": key,
+                "content": content,
+                "metadata": json.loads(meta_json or "{}"),
+                "score": score,
+            })
 
-            if score < min_score:
-                continue
-
-            results.append(
-                {
-                    "id": _id,
-                    "key": key,
-                    "content": content,
-                    "metadata": json.loads(meta_json or "{}"),
-                    "score": score,
-                }
-            )
-
-        results.sort(key=lambda r: r["score"], reverse=True)
-        return results[:top_k]
+        # Reordena porque SQL IN não garante ordem
+        final_results.sort(key=lambda r: r["score"], reverse=True)
+        return final_results
 
     # ---------- utilidades ----------
 

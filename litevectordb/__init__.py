@@ -14,7 +14,7 @@ from .vector_store import VectorStore
 from .memory import MemoryDB
 from .embeddings import fake_embed
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "LocalVectorDB",
