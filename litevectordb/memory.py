@@ -44,6 +44,20 @@ class MemoryDB:
             key=key,
         )
 
+    def remember(
+        self,
+        session_id: str,
+        content: str,
+        metadata: dict = None,
+        role: str = "user",
+    ) -> int:
+        return self.store_memory(
+            session_id=session_id,
+            role=role,
+            content=content,
+            metadata=metadata,
+        )
+
     # ============================================================
     # Recuperar memórias relevantes
     # ============================================================
@@ -58,21 +72,35 @@ class MemoryDB:
         Busca vetorial + filtro por sessão.
         """
         q_vec = fake_embed(query, dim=self.dim)
-        results = self.store.search(q_vec, top_k=top_k, min_score=min_score)
+        return self.store.search(
+            q_vec,
+            top_k=top_k,
+            min_score=min_score,
+            where={"session_id": session_id},
+        )
 
-        # filtrar por sessão (como faria o Chroma com "where")
-        filtered = [
-            r for r in results
-            if r["metadata"].get("session_id") == session_id
-        ]
+    def recall(
+        self,
+        session_id: str,
+        query: str,
+        top_k: int = 5,
+        min_score: float = 0.2,
+    ):
+        return self.retrieve_memory(
+            session_id=session_id,
+            query=query,
+            top_k=top_k,
+            min_score=min_score,
+        )
 
-        return filtered
+    def forget(self, session_id: str) -> int:
+        return self.store.delete_where({"session_id": session_id})
 
     # ============================================================
     # Utilidades
     # ============================================================
-    def count(self):
-        return self.store.count()
+    def count(self, session_id: str = None):
+        return self.store.count({"session_id": session_id} if session_id else None)
 
     def close(self):
         self.store.close()

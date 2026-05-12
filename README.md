@@ -146,6 +146,14 @@ A busca vetorial utiliza **similaridade de cosseno**:
 pip install litevectordb
 ```
 
+## Novidades da 0.3.0
+
+- Busca com filtro por metadata via `where={"categoria": "web"}`.
+- Operacoes de producao: `get`, `delete`, `upsert_texts`, `update_metadata`, `count`.
+- `MemoryDB` com atalhos `remember`, `recall` e `forget` por sessao.
+- Exportacao e importacao JSONL para backup e migracao.
+- Projeto de teste executavel em `sample_projects/litevectordb_smoke_test`.
+
 Ou instale a partir do código:
 
 ```bash
@@ -210,4 +218,3 @@ MIT License - veja o arquivo LICENSE para detalhes.
 ---
 
 **Desenvolvido com ❤️ para a comunidade Python**
-
